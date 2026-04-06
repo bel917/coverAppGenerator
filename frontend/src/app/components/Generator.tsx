@@ -21,13 +21,35 @@ export function Generator() {
   const [error, setError] = useState("");
 
   const handleCvChange = async (file: File) => {
-    setFormData({ ...formData, cvFile: file });
     setError("");
+
+    const maxSize = 5 * 1024 * 1024; // 5MB
+    const allowedExt = ["pdf", "doc", "docx"];
+    const allowedMime = [
+      "application/pdf",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ];
+
+    const name = file.name || "";
+    const ext = name.split('.').pop()?.toLowerCase() || '';
+
+    if (!allowedExt.includes(ext) && !allowedMime.includes(file.type)) {
+      setError("Invalid file type. Only PDF and Word (DOC/DOCX) files are allowed.");
+      return;
+    }
+
+    if (file.size > maxSize) {
+      setError("File is too large. Maximum allowed size is 5MB.");
+      return;
+    }
+
+    setFormData({ ...formData, cvFile: file });
     setIsUploadingCv(true);
 
     try {
       const uploaded = await uploadCv({
-        title: file.name.replace(/\.[^.]+$/, "") || "Uploaded CV",
+        title: name.replace(/\.[^.]+$/, "") || "Uploaded CV",
         file,
       });
       setUploadedCvId(uploaded.id);
