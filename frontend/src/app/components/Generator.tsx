@@ -47,10 +47,42 @@ export function Generator() {
     setFormData({ ...formData, cvFile: file });
     setIsUploadingCv(true);
 
+    // Try to extract text for PDFs and DOCX in-browser
+    let extractedText: string | null = null;
+
+    try {
+      if (ext === "pdf" || file.type === "application/pdf") {
+        const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf");
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        let text = "";
+        for (let i = 1; i <= pdf.numPages; i++) {
+          // eslint-disable-next-line no-await-in-loop
+          const page = await pdf.getPage(i);
+          // eslint-disable-next-line no-await-in-loop
+          const content = await page.getTextContent();
+          const pageText = content.items.map((it: any) => it.str).join(" ");
+          text += pageText + "\n\n";
+        }
+        extractedText = text.trim();
+      } else if (ext === "docx" || file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+        const mammoth = await import("mammoth");
+        const arrayBuffer = await file.arrayBuffer();
+        // @ts-ignore
+        const result = await (mammoth.default || mammoth).extractRawText({ arrayBuffer });
+        extractedText = (result?.value || "").trim();
+      }
+    } catch (e) {
+      // Extraction failed — continue without extracted text
+      // console.warn('Extraction failed', e);
+      extractedText = null;
+    }
+
     try {
       const uploaded = await uploadCv({
         title: name.replace(/\.[^.]+$/, "") || "Uploaded CV",
         file,
+        extracted_text: extractedText ?? null,
       });
       setUploadedCvId(uploaded.id);
     } catch (err) {

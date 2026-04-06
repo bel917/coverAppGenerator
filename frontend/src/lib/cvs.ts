@@ -39,11 +39,16 @@ export async function listCvs() {
 export async function uploadCv(input: {
   title: string;
   file: File;
+  extracted_text?: string | null;
   is_default?: boolean;
 }) {
   const formData = new FormData();
   formData.append("title", input.title);
   formData.append("file", input.file);
+
+  if (typeof input.extracted_text === "string") {
+    formData.append("extracted_text", input.extracted_text);
+  }
 
   if (typeof input.is_default === "boolean") {
     formData.append("is_default", String(input.is_default));
