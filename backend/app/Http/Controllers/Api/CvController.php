@@ -37,7 +37,7 @@ class CvController extends ApiController
             'file_path' => $path,
             'file_mime_type' => $file->getClientMimeType(),
             'file_size' => $file->getSize(),
-            'extracted_text' => null,
+            'extracted_text' => $request->input('extracted_text'),
             'parsed_data_json' => null,
             'is_default' => $request->boolean('is_default'),
         ]);

@@ -16,6 +16,7 @@ class StoreCvRequest extends FormRequest
         return [
             'title' => ['required', 'string', 'max:255'],
             'file' => ['required', 'file', 'mimes:pdf,doc,docx', 'max:5120'],
+            'extracted_text' => ['nullable', 'string'],
             'is_default' => ['nullable', 'boolean'],
         ];
     }
