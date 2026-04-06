@@ -60,55 +60,137 @@ class CoverLetterGenerationService
     ): string {
         $role = $jobDescription?->title ?? 'the role';
         $company = $jobDescription?->company_name ?? 'the company';
-        $cvTitle = $cv?->title ?? 'my background';
 
-        // Extract short list of key facts from the CV text when available
-        $facts = $cv ? $this->extractKeyFactsFromCv($cv) : [];
+        // Extract prioritized facts (numeric achievements first, then tech highlights)
+        $facts = $cv ? $this->extractPrioritizedFacts($cv) : [];
 
-        // Find top matches between job description and CV facts
+        // Detect candidate technologies from facts
+        $techs = $this->detectTechnologies($facts);
+
+        // Match job requirements
         $matches = $this->matchRequirements($jobDescriptionText, $facts);
 
-        // Build a more specific, human-sounding cover letter
-        $openingFact = $facts[0] ?? null;
-        $hook = $openingFact
-            ? "With {$openingFact}, I am interested in the {$role} at {$company}."
-            : "I'm writing regarding the {$role} at {$company}.";
+        // Intro: who and main techs (up to 3)
+        $introTech = $techs ? implode(', ', array_slice($techs, 0, 3)) : '';
+        $intro = $introTech
+            ? "I'm {$user->name}, a Software Developer with experience in {$introTech}."
+            : "I'm {$user->name}, a Software Developer.";
 
-        $body = "";
-
-        if (!empty($matches['matched'])) {
-            // use up to two matched facts to craft concrete sentences
-            $used = array_slice($matches['matched'], 0, 2);
-            foreach ($used as $m) {
-                $body .= "In my previous role, {$m['fact']} — this directly addresses your need for {$m['requirement']}.\n\n";
+        // Body: include 2–3 concrete achievements or technologies and connect to requirements
+        $selectedFacts = array_slice($facts, 0, 3);
+        $bodyParts = [];
+        foreach ($selectedFacts as $f) {
+            // find a matching keyword for connection, if any
+            $matchedReq = null;
+            foreach ($matches['matched'] as $m) {
+                if ($m['fact'] === $f) {
+                    $matchedReq = $m['requirement'];
+                    break;
+                }
             }
-        } elseif (!empty($facts)) {
-            // fallback: pick up to two strong facts
-            $used = array_slice($facts, 0, 2);
-            foreach ($used as $f) {
-                $body .= "For example, {$f}.\n\n";
+
+            if ($matchedReq) {
+                $bodyParts[] = "$f — this addresses your need for {$matchedReq}.";
+            } else {
+                $bodyParts[] = "$f.";
             }
         }
 
-        // If there are missing or unmatched requirements, be honest and show transferable skills
-        if (!empty($matches['missing'])) {
-            $missingList = implode(', ', array_slice($matches['missing'], 0, 3));
-            $transfer = $facts[0] ?? 'relevant experience';
-            $body .= "I haven't had direct responsibility for {$missingList}, but I have {$transfer} and I learn quickly — I can ramp up and contribute to those areas within weeks.\n\n";
+        $body = implode(' ', $bodyParts);
+
+        // Missing skills honesty — list missing items once, framed with transferable skills + willingness to learn
+        $missingSentence = null;
+        $needs = $this->detectNeeds($jobDescriptionText, ['symfony', 'go']);
+        $missing = [];
+        foreach ($needs as $need) {
+            if (!in_array(strtolower($need), array_map('strtolower', $techs), true)) {
+                $missing[] = ucfirst($need);
+            }
         }
 
-        // Closing: propose next step and sign
-        $closing = "I'd welcome a short conversation to show how my background in";
-        $closing .= $facts[0] ? " {$this->shortenFactForClosing($facts[0])} " : " this area ";
-        $closing .= "can help {$company} with the {$role}.\n\n";
+        if (!empty($missing)) {
+            $missingList = count($missing) === 1 ? $missing[0] : (implode(', ', array_slice($missing, 0, -1)) . ' and ' . end($missing));
+            // choose up to three transferable examples from detected techs or facts
+            $transferExamples = $techs ? implode(', ', array_slice($techs, 0, 3)) : ($facts[0] ?? 'related backend and cloud experience');
+            $missingSentence = "I don't yet have production experience with {$missingList}, but my {$transferExamples} are transferable and I'm ready to learn and apply {$missingList} quickly.";
+        }
 
-        $closing .= "Thanks for considering my application.\n\n";
-        $closing .= "Sincerely,\n{$user->name}";
+        // Closing: brief call-to-action
+        $closing = "If you'd like, I can walk through the API designs and migration approach I used for previous projects in a short call.";
 
-        $letter = trim("Dear Hiring Team,\n\n{$hook}\n\n{$body}{$closing}");
+        $letter = trim(implode("\n\n", array_filter([
+            $intro,
+            $body ?: null,
+            $missingSentence,
+            $closing,
+            "Sincerely,\n{$user->name}",
+        ])));
 
-        // Final pass to avoid templated/generic phrases
         return $this->cleanGenericPhrases($letter);
+    }
+
+    protected function extractPrioritizedFacts(Cv $cv): array
+    {
+        $text = (string) $cv->extracted_text;
+        $facts = [];
+
+        // Look for strong numeric/monetary/percentage achievements first
+        if (preg_match_all('/([0-9]+(?:[.,][0-9]+)?(?:\+|%|\s+revenue|\s+products?))/i', $text, $m)) {
+            foreach ($m[0] as $match) {
+                // capture surrounding context (short clause)
+                if (preg_match('/([^.\n]{0,80}' . preg_quote($match, '/') . '[^.\n]{0,80})/i', $text, $ctx)) {
+                    $facts[] = trim($ctx[1], " .\n");
+                }
+            }
+        }
+
+        // Next, pick lines with achievement verbs
+        $lines = preg_split('/\r?\n/', $text);
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if ($line === '') continue;
+            if (preg_match('/\b(led|managed|increased|reduced|delivered|built|developed|designed|launched|improved|optimized|migrat)/i', $line)) {
+                $facts[] = rtrim($line, '.');
+            }
+            if (count($facts) >= 6) break;
+        }
+
+        // Also add notable tech mentions
+        if (preg_match_all('/\b(Laravel|React|Flutter|Bagisto|Shopware|Magento|AWS|Docker|MySQL|REST API|S3)\b/i', $text, $techs)) {
+            foreach (array_unique($techs[0]) as $t) {
+                $facts[] = trim($t);
+            }
+        }
+
+        // dedupe and return up to 4 concise facts
+        $facts = array_values(array_unique($facts));
+        return array_slice($facts, 0, 4);
+    }
+
+    protected function detectTechnologies(array $facts): array
+    {
+        $techList = ['Laravel','React','Flutter','Bagisto','Shopware','Magento','AWS','Docker','MySQL','REST','S3','Java','Go','Symfony'];
+        $found = [];
+        foreach ($facts as $f) {
+            foreach ($techList as $t) {
+                if (stripos($f, $t) !== false) {
+                    $found[] = $t;
+                }
+            }
+        }
+        return array_values(array_unique($found));
+    }
+
+    protected function detectNeeds(string $jobText, array $terms): array
+    {
+        $found = [];
+        $lower = strtolower($jobText);
+        foreach ($terms as $t) {
+            if (strpos($lower, strtolower($t)) !== false) {
+                $found[] = $t;
+            }
+        }
+        return $found;
     }
 
     protected function extractKeyFactsFromCv(Cv $cv): array
